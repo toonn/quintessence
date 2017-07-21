@@ -41,3 +41,5 @@ expr :: Parser Expr
 expr = do
   es <- some term
   return (foldl1 App es)
+
+-- comment, constructor, operator, type, module,
