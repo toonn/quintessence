@@ -1,8 +1,10 @@
 module Lexer where
 
 import Data.List
+import Data.Maybe
+import Data.Scientific
 import Control.Monad (void)
-import Text.Megaparsec
+import Text.Megaparsec as Mp
 import Text.Megaparsec.Expr
 import Text.Megaparsec.String
 import qualified Text.Megaparsec.Lexer as L
@@ -16,7 +18,7 @@ lexeme :: Parser a -> Parser a
 lexeme = L.lexeme whitespace
 
 literal :: Parser Integer
-literal = lexeme L.integer -- L.integer parses unsigned integers
+literal = integer -- <|> float <|> char <|> string
 
 specialChars :: String
 specialChars = "(),;[]`{}"
@@ -25,12 +27,22 @@ special :: Parser Char
 special = oneOf specialChars <?> "special"
 
 whitespace :: Parser ()
-whitespace = L.space (void spaceChar) lineComment blockComment
+whitespace = L.space (void whitechar) lineComment blockComment
   where lineComment = L.skipLineComment "--"
         blockComment = L.skipBlockComment "{-" "-}"
 
+whitechar :: Parser Char
+whitechar = spaceChar
+
+space :: Parser Char
+space = Mp.char ' '
+
+graphic :: Parser Char
+graphic = small <|> large <|> symbol <|> digit <|> special <|> Mp.char '"'
+      <|> Mp.char '\''
+
 small :: Parser Char
-small = lowerChar <|> char '_'
+small = lowerChar <|> Mp.char '_'
 
 large :: Parser Char
 large = upperChar
@@ -47,7 +59,7 @@ digit :: Parser Char
 digit = numberChar
 
 identifierBody :: Parser String
-identifierBody = many (small <|> large <|> digit <|> char '\'')
+identifierBody = many (small <|> large <|> digit <|> Mp.char '\'')
 
 varid :: Parser String
 varid = try (((:) <$> small <*> identifierBody) >>= check)
@@ -66,7 +78,7 @@ reservedIds = [ "case", "class", "data", "default", "deriving", "do", "else"
 reservedid :: Parser String
 reservedid = choice (noncomposed <$> reservedIds)
   where
-    noncomposed w = string w <* notFollowedBy identifierBody
+    noncomposed w = Mp.string w <* notFollowedBy identifierBody
 
 varsym :: Parser String
 varsym = try ((((:) <$> (symbol >>= checkColon) <*> many symbol)
@@ -75,9 +87,6 @@ varsym = try ((((:) <$> (symbol >>= checkColon) <*> many symbol)
     checkColon = checkFail (== ':')
                            [ "value operator cannot start with '"
                            , "' symbol" ]
-    checkReservedOp = checkFail (`elem` reservedOps)
-                                [ "reserved operator \""
-                                , "\" cannot be an operator" ]
     checkDashes x = case x of
       ('-':'-':dashes) ->
         checkFail (all (== '-'))
@@ -87,14 +96,10 @@ varsym = try ((((:) <$> (symbol >>= checkColon) <*> many symbol)
       _ -> return x
 
 consym :: Parser String
-consym = try (((:) <$> char ':' <*> many symbol) >>= checkReservedOp)
-  where
-    checkReservedOp = checkFail (`elem` reservedOps)
-                                [ "reserved operator \""
-                                , "\" cannot be an operator" ]
+consym = try (((:) <$> Mp.char ':' <*> many symbol) >>= checkReservedOp)
 
 reservedOp :: String -> Parser ()
-reservedOp op = string op *> notFollowedBy alphaNumChar *> whitespace
+reservedOp op = Mp.string op *> notFollowedBy alphaNumChar *> whitespace
 
 reservedOps :: [String]
 reservedOps = ["..", ":", "::", "=", "\\", "|", "<-", "->", "@", "~", "=>"]
@@ -108,11 +113,72 @@ tycon = conid
 tycls :: Parser String
 tycls = conid
 
+modid :: Parser String
+modid = (++) <$> (concat <$> many dotted) <*> conid
+  where dotted = (++) <$> conid <*> ((:[]) <$> Mp.char '.')
+
+qvarid :: Parser String
+qvarid = qualified varid
+
+qconid :: Parser String
+qconid = qualified conid
+
+qtycon :: Parser String
+qtycon = qualified tycon
+
+qtycls :: Parser String
+qtycls = qualified tycls
+
+qvarsym :: Parser String
+qvarsym = qualified varsym
+
+qconsym :: Parser String
+qconsym = qualified consym
+
+decimal :: Parser Integer
+decimal = L.integer
+
+octal :: Parser Integer
+octal = L.octal
+
+hexadecimal :: Parser Integer
+hexadecimal = L.hexadecimal
+
+integer :: Parser Integer
+integer = decimal <|> hexadecimal <|> octal
+
+float :: Parser Scientific
+float = L.scientific
+
+exponent :: Parser Integer
+exponent = try (char' 'e') *> L.signed nospace decimal
+  where nospace = return ()
+
+-- charLiteral shouldn't match '
+char :: Parser Char
+char = Mp.char '\'' *> L.charLiteral <* Mp.char '\''
+
+-- string needs to handle gaps
+string :: Parser String
+string = catMaybes <$> (Mp.char '"' *> manyTill ch (Mp.char '"'))
+  where ch = (Just <$> L.charLiteral) <|> (Nothing <$ Mp.string "\\&")
+
+gap :: Parser ()
+gap = Mp.char '\\' *> skipSome whitechar <* Mp.char '\\'
+
+qualified :: Parser String -> Parser String
+qualified p = (++) <$> option "" modid <*> p
+
 checkFail :: (Eq a, Show a, Monad m) => (a -> Bool) -> [String] -> (a -> m a)
 checkFail predicate failureMessage = check
   where check x = if predicate x
                   then fail $ intercalate (show x) failureMessage
                   else return x
+
+checkReservedOp :: Monad m => String -> m String
+checkReservedOp = checkFail (`elem` reservedOps)
+                            [ "reserved operator \""
+                            , "\" cannot be an operator" ]
 
 {-
 parens :: Parser a -> Parser a
