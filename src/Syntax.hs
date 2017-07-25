@@ -1,21 +1,23 @@
 module Syntax where
 
-type Name = String
+type Id = String
 
-data Expr
-  = Var Name
-  | Lit Literal
-  | App Expr Expr
-  | Lam Name Expr
-  deriving (Eq, Show)
+data Module = Module Id [Id] Body
 
-data Literal
-  = LNat Integer
-  | LBool Bool
-  deriving (Eq, Show)
+data Body = Body [Impdecl] [Topdecl]
 
-data Type
-  = TNat
-  | TBool
-  | TArr Type Type
-  deriving (Eq, Show)
+data Impdecl = Impdecl Id Impspec
+             | Impdeclq Id Id Impspec
+
+data Impspec = Impspec [Import]
+             | Hiding [Import]
+
+data Import = ImportVar Id
+            | ImportTyCon Id [Id]
+            | ImportTyCls Id [Id]
+
+data Topdecl = TypeDecl Id Type
+             | DataDecl Context Id [Constr] [Id]
+             | NewTypeDecl Context Id Constr [Id]
+             | ClassDecl
+

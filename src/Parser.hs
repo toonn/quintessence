@@ -8,6 +8,10 @@ import Text.Megaparsec.String
 import Syntax
 import Lexer
 
+
+
+-- comment, constructor, operator, type, module,
+{-
 variable :: Parser Expr
 variable = do
   x <- identifier
@@ -41,5 +45,4 @@ expr :: Parser Expr
 expr = do
   es <- some term
   return (foldl1 App es)
-
--- comment, constructor, operator, type, module,
+-}
