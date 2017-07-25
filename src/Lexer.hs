@@ -1,4 +1,23 @@
-module Lexer where
+module Lexer
+  ( whitespace
+  , varid
+  , qvarid
+  , tyvar
+  , conid
+  , qconid
+  , tycon
+  , qtycon
+  , tycls
+  , qtycls
+  , reservedid
+  , varsym
+  , qvarsym
+  , consym
+  , qconsym
+  , reservedop
+  , modid
+  )
+where
 
 import Data.List
 import Data.Maybe
@@ -9,13 +28,13 @@ import Text.Megaparsec.Expr
 import Text.Megaparsec.String
 import qualified Text.Megaparsec.Lexer as L
 
-program :: Parser () -> Parser [()]
-program p = many (lexeme p <|> whitespace)
+program :: Parser [String]
+program = many (lexeme <|> ("" <$ whitespace))
 
--- lexeme -> qvarid | qconid | qvarsym | qconsym | literal | special
---         | reservedop | reservedid
-lexeme :: Parser a -> Parser a
-lexeme = L.lexeme whitespace
+lexeme :: Parser String
+lexeme = qvarid <|> qconid <|> qvarsym <|> qconsym
+     <|> (show <$> literal) <|> (show <$> special)
+     <|> reservedop <|> reservedid
 
 literal :: Parser Integer
 literal = integer -- <|> float <|> char <|> string
@@ -38,8 +57,8 @@ space :: Parser Char
 space = Mp.char ' '
 
 graphic :: Parser Char
-graphic = small <|> large <|> symbol <|> digit <|> special <|> Mp.char '"'
-      <|> Mp.char '\''
+graphic = small <|> large <|> symbol <|> digit <|> special <|> doublequote
+      <|> apostrophe
 
 small :: Parser Char
 small = lowerChar <|> Mp.char '_'
@@ -59,7 +78,7 @@ digit :: Parser Char
 digit = numberChar
 
 identifierBody :: Parser String
-identifierBody = many (small <|> large <|> digit <|> Mp.char '\'')
+identifierBody = many (small <|> large <|> digit <|> apostrophe)
 
 varid :: Parser String
 varid = try (((:) <$> small <*> identifierBody) >>= check)
@@ -98,11 +117,11 @@ varsym = try ((((:) <$> (symbol >>= checkColon) <*> many symbol)
 consym :: Parser String
 consym = try (((:) <$> Mp.char ':' <*> many symbol) >>= checkReservedOp)
 
-reservedOp :: String -> Parser ()
-reservedOp op = Mp.string op *> notFollowedBy alphaNumChar *> whitespace
+reservedops :: [String]
+reservedops = ["..", ":", "::", "=", "\\", "|", "<-", "->", "@", "~", "=>"]
 
-reservedOps :: [String]
-reservedOps = ["..", ":", "::", "=", "\\", "|", "<-", "->", "@", "~", "=>"]
+reservedop :: Parser String
+reservedop = choice (Mp.string <$> reservedops) <* notFollowedBy alphaNumChar <* whitespace
 
 tyvar :: Parser String
 tyvar = varid
@@ -154,20 +173,29 @@ exponent :: Parser Integer
 exponent = try (char' 'e') *> L.signed nospace decimal
   where nospace = return ()
 
--- charLiteral shouldn't match '
 char :: Parser Char
-char = Mp.char '\'' *> L.charLiteral <* Mp.char '\''
+char = apostrophe *> (L.charLiteral >>= checkApostrophe) <* apostrophe
+  where checkApostrophe = checkFail (== '\'')
+                                    ["empty character literal"]
 
--- string needs to handle gaps
 string :: Parser String
-string = catMaybes <$> (Mp.char '"' *> manyTill ch (Mp.char '"'))
-  where ch = (Just <$> L.charLiteral) <|> (Nothing <$ Mp.string "\\&")
+string = catMaybes <$> (doublequote *> manyTill ch doublequote)
+  where ch = (Just <$> L.charLiteral)
+         <|> (Nothing <$ Mp.string "\\&")
+         <|> (Nothing <$ gap)
 
 gap :: Parser ()
 gap = Mp.char '\\' *> skipSome whitechar <* Mp.char '\\'
 
+
 qualified :: Parser String -> Parser String
 qualified p = (++) <$> option "" modid <*> p
+
+apostrophe :: Parser Char
+apostrophe = Mp.char '\''
+
+doublequote :: Parser Char
+doublequote = Mp.char '"'
 
 checkFail :: (Eq a, Show a, Monad m) => (a -> Bool) -> [String] -> (a -> m a)
 checkFail predicate failureMessage = check
@@ -176,33 +204,25 @@ checkFail predicate failureMessage = check
                   else return x
 
 checkReservedOp :: Monad m => String -> m String
-checkReservedOp = checkFail (`elem` reservedOps)
+checkReservedOp = checkFail (`elem` reservedops)
                             [ "reserved operator \""
                             , "\" cannot be an operator" ]
 
-{-
+
 parens :: Parser a -> Parser a
-parens = between (symbol "(") (symbol ")")
+parens = between (Mp.char '(') (Mp.char ')')
 
 braces :: Parser a -> Parser a
-braces = between (symbol "{") (symbol "}")
+braces = between (Mp.char '{') (Mp.char '}')
 
 brackets :: Parser a -> Parser a
-brackets = between (symbol "[") (symbol "]")
+brackets = between (Mp.char '[') (Mp.char ']')
 
-nat :: Parser Integer
-nat = lexeme L.integer -- L.integer parses unsigned integers
+backticks :: Parser a -> Parser a
+backticks = between (Mp.char '`') (Mp.char '`')
 
-semicolon :: Parser String
-semicolon = symbol ";"
-
-identifier :: Parser Char -> Parser String
-identifier initialChar = (lexeme . try) (p >>= check)
-  where
-    p = (:) <$> initialChar <*> many alphaNumChar
-    check x = if x `elem` reservedIds
-                then fail $ "keyword " ++ show x ++ " cannot be an identifier"
-                else return x
+semicolon :: Parser Char
+semicolon = Mp.char ';'
 
 fileContents :: Parser a -> Parser a
 fileContents p = do
@@ -210,4 +230,3 @@ fileContents p = do
   r <- p
   eof
   return r
--}
